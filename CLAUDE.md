@@ -24,10 +24,12 @@ comes from `CLOUDFLARE_ACCOUNT_ID` in `.env` (git-ignored); secrets are set with
 `wrangler secret put` and, locally, live in `.dev.vars` — which is also what `wrangler types`
 reads to type them. Both files have committed `.example` counterparts.
 
-`vars.ORIGIN_URL` stays in `wrangler.jsonc`: it is configuration rather than a credential, so
-keeping it there makes it reviewable and deploys it atomically with the code that reads it.
-It is still the `door-sync.example.org` placeholder — the Cloudflare Tunnel does not exist
-yet — so deliveries fail the consumer's config preflight and dead-letter. The
+`ORIGIN_URL` is a dashboard-managed var, not a secret and not declared in `wrangler.jsonc`:
+it is configuration rather than a credential, and a var's value stays readable in the
+dashboard (a secret's is write-only), which matters when asking "which origin is this
+deployed against?". `keep_vars: true` is what stops each deploy from deleting it. The
+deployed value is still the `door-sync.example.org` placeholder — the Cloudflare Tunnel does
+not exist yet — so deliveries fail the consumer's config preflight and dead-letter. The
 CiviCRM -> Worker half is live.
 
 ## Commands
@@ -62,14 +64,18 @@ the Worker. That file is committed and large; it is generated, so do not edit it
     concurrently under `Promise.all` and each message acks or retries on its own; a non-2xx or
     a timeout throws, which retries and eventually dead-letters. Order does not matter because
     every event makes the Pi reconcile its whole population.
-- **`wrangler.jsonc`** — deploy config: the `EVENTS` queue producer, the consumer
-  (`max_batch_size` 10, `max_retries` 5, `retry_delay` 30s, DLQ `door-webhook-dlq`), and the
-  non-secret `ORIGIN_URL` var. `nodejs_compat` is on and `observability` is enabled. No
-  `account_id` — that comes from the environment.
+- **`wrangler.jsonc`** — deploy config: the `EVENTS` queue producer and the consumer
+  (`max_batch_size` 10, `max_retries` 5, `retry_delay` 30s, DLQ `door-webhook-dlq`).
+  `nodejs_compat` is on, `observability` is enabled, and `keep_vars` is true. No `account_id`
+  and no `vars` — the account comes from `.env`, `ORIGIN_URL` from the dashboard. Because
+  `keep_vars` is on, deleting a var here no longer deletes it from the deployed Worker; do
+  that in the dashboard as well.
 - **Secrets** (`CIVICRM_WEBHOOK_SECRET`, `ORIGIN_HMAC_SECRET`, `CF_ACCESS_CLIENT_ID`,
   `CF_ACCESS_CLIENT_SECRET`) are set with `wrangler secret put`, never in `wrangler.jsonc`.
   Locally they live in `.dev.vars`, which is git-ignored, which the test pool loads, and which
-  `wrangler types` reads to generate their `Env` entries.
+  `wrangler types` reads to generate their `Env` entries (`ORIGIN_URL` included). Put Worker
+  bindings in `.dev.vars`, never `.env`: when both exist `.dev.vars` wins and `.env` bindings
+  are silently dropped. `.env` carries only wrangler's own CLI variables.
 - **Tests** (`test/index.spec.ts`) use `@cloudflare/vitest-pool-workers`, which runs them inside
   the real `workerd` runtime; `vitest.config.mts` points the pool at `wrangler.jsonc`, so tests
   share the Worker's config. They import the `worker` default export and invoke handlers

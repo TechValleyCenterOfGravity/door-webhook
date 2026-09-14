@@ -35,9 +35,10 @@ The verifier rejects a timestamp more than 300s from now (replay guard).
 
 ## Setup
 
-`wrangler.jsonc` holds no account id and no secrets, so it is safe to publish.
-The account comes from a git-ignored `.env`; secrets are set with
-`wrangler secret put`. `ORIGIN_URL` stays in the file as ordinary config.
+`wrangler.jsonc` holds no account id, no hostname and no secrets, so it is safe
+to publish. The account comes from a git-ignored `.env`, secrets from
+`wrangler secret put`, and `ORIGIN_URL` from the Cloudflare dashboard —
+`keep_vars: true` is what stops each deploy from deleting it.
 
 ```bash
 npm install
@@ -50,9 +51,10 @@ cp .env.example .env      # then set CLOUDFLARE_ACCOUNT_ID (npx wrangler whoami)
 npx wrangler queues create door-webhook-events
 npx wrangler queues create door-webhook-dlq
 
-# 3. Set vars.ORIGIN_URL in wrangler.jsonc to the Pi's Cloudflare Tunnel
-#    hostname — scheme + host only, the Worker appends the path. It is
-#    non-secret config, so it is reviewed and deployed with the code.
+# 3. Set ORIGIN_URL in the Cloudflare dashboard (Worker -> Settings -> Variables)
+#    to the Pi's Cloudflare Tunnel hostname — scheme + host only, the Worker
+#    appends the path. It is a plain var, not a secret, so its value stays
+#    readable there; `keep_vars` in wrangler.jsonc keeps deploys from wiping it.
 
 # 4. Set the secrets:
 npx wrangler secret put CIVICRM_WEBHOOK_SECRET    # shared with the CiviRules action
@@ -69,8 +71,11 @@ one is logged by name (`missing Worker config: ORIGIN_URL, ...`) rather than
 surfacing as a crypto error.
 
 For local development, copy `.dev.vars.example` to `.dev.vars` (git-ignored) and
-fill it in — `wrangler types` reads that file to type the bindings, so re-run
-`npm run cf-typegen` after adding a key there or changing `wrangler.jsonc`.
+fill it in, `ORIGIN_URL` included — `wrangler types` reads that file to type the
+bindings, so re-run `npm run cf-typegen` after adding a key there or changing
+`wrangler.jsonc`. Use `.dev.vars` rather than `.env` for these: if both exist,
+`.dev.vars` wins and Worker bindings in `.env` are silently ignored. `.env` is
+only for the wrangler CLI's own variables, such as `CLOUDFLARE_ACCOUNT_ID`.
 
 ## Commands
 

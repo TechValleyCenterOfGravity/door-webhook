@@ -34,16 +34,27 @@
 			},
 		],
 	},
-	// The Pi's tunnel origin: scheme + host only, the Worker appends the path.
-	// Non-secret on purpose — it is configuration, not a credential, so it stays
-	// reviewable here and deploys atomically with the code that reads it. The
-	// endpoint behind it is protected by the Cloudflare Access service token and
-	// the HMAC, not by this hostname being unknown.
-	// The account id is not pinned here; it comes from CLOUDFLARE_ACCOUNT_ID in
-	// .env (git-ignored). Secrets are set with `wrangler secret put` (see README):
-	// CIVICRM_WEBHOOK_SECRET, ORIGIN_HMAC_SECRET, CF_ACCESS_CLIENT_ID,
+	// ORIGIN_URL — the Pi's tunnel origin, scheme + host only (the Worker appends
+	// the path) — is deliberately NOT declared here. It is managed in the
+	// Cloudflare dashboard so the hostname stays out of this public repo, and
+	// `keep_vars` below is what stops each deploy from deleting it.
+	//
+	// It is a plain var rather than a secret on purpose: it is configuration, not
+	// a credential, and a var's value stays readable in the dashboard, so "which
+	// origin is this deployed against?" is answerable while debugging. A secret is
+	// write-only. The endpoint is protected by the Access service token and the
+	// HMAC, not by the hostname being unknown.
+	//
+	// Locally it comes from .dev.vars, which is also what `wrangler types` reads
+	// to put it on `Env`.
+	//
+	// By default Wrangler treats this file as the source of truth and deletes any
+	// var it does not declare. keep_vars turns that off, so dashboard-managed vars
+	// survive a deploy. The cost is drift: removing a var from this file no longer
+	// removes it from the deployed Worker — do that in the dashboard too.
+	"keep_vars": true,
+	// The account id is not pinned here either; it comes from CLOUDFLARE_ACCOUNT_ID
+	// in .env (git-ignored). Secrets are set with `wrangler secret put` (see
+	// README): CIVICRM_WEBHOOK_SECRET, ORIGIN_HMAC_SECRET, CF_ACCESS_CLIENT_ID,
 	// CF_ACCESS_CLIENT_SECRET.
-	"vars": {
-		"ORIGIN_URL": "https://door-sync.example.org",
-	},
 }
