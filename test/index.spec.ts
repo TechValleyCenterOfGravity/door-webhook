@@ -217,6 +217,19 @@ describe('CiviCRM producer contract', () => {
 		expect(ok).toBe(false);
 	});
 
+	it('accepts an explicit null contact_id from the producer', async () => {
+		// Contract::membershipPayload sends JSON null (not 0) when the trigger has
+		// no usable contact id, so this is a real shape on the wire.
+		const { env, sent } = fetchEnv();
+		const ctx = createExecutionContext();
+		const res = await worker.fetch(await signedRequest('{"contact_id":null,"occurred_at":1789000000}'), env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(res.status).toBe(202);
+		expect((sent[0] as { contactId: number | null }).contactId).toBeNull();
+		expect((sent[0] as { occurredAt: number }).occurredAt).toBe(1789000000);
+	});
+
 	it('enqueues the contact_id from the PHP payload shape', async () => {
 		const { env, sent } = fetchEnv();
 		const hex = await hmacHex(SECRET, `${PHP_TIMESTAMP}.${PHP_BODY}`);
