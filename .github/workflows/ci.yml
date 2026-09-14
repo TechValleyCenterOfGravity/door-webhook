@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A new push supersedes an in-flight run for the same PR or branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # The root tsconfig excludes test/, so both projects need checking.
+      - name: Typecheck worker
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Typecheck tests
+        run: npx tsc --noEmit -p test/tsconfig.json
+
+      # Runs inside workerd via @cloudflare/vitest-pool-workers. The suite fakes
+      # env and global fetch throughout, so it needs no Cloudflare credentials
+      # and no .dev.vars (which is git-ignored and absent here).
+      - name: Test
+        run: npm test -- run
