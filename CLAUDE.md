@@ -19,13 +19,16 @@ CiviCRM (CiviRules action) ──HMAC POST──▶ door-webhook (this Worker)
 Buffering on the Queue is what makes a Pi reboot lossless: a failed delivery is retried and,
 after `max_retries`, dead-lettered rather than dropped.
 
-`wrangler.jsonc` deliberately carries no account id, hostname or secret, so it is safe to
-publish. The account comes from `CLOUDFLARE_ACCOUNT_ID` in `.env`; every runtime value is a
-secret (`ORIGIN_URL` included) set with `wrangler secret put`, and locally from `.dev.vars`,
-which is also what `wrangler types` reads to type them. Both have committed `.example` files.
+`wrangler.jsonc` carries no account id and no secrets, so it is safe to publish. The account
+comes from `CLOUDFLARE_ACCOUNT_ID` in `.env` (git-ignored); secrets are set with
+`wrangler secret put` and, locally, live in `.dev.vars` — which is also what `wrangler types`
+reads to type them. Both files have committed `.example` counterparts.
 
-`ORIGIN_URL` is not set yet — the Cloudflare Tunnel to the Pi does not exist — so deliveries
-fail the consumer's config preflight and dead-letter. The CiviCRM -> Worker half is live.
+`vars.ORIGIN_URL` stays in `wrangler.jsonc`: it is configuration rather than a credential, so
+keeping it there makes it reviewable and deploys it atomically with the code that reads it.
+It is still the `door-sync.example.org` placeholder — the Cloudflare Tunnel does not exist
+yet — so deliveries fail the consumer's config preflight and dead-letter. The
+CiviCRM -> Worker half is live.
 
 ## Commands
 
@@ -59,13 +62,14 @@ the Worker. That file is committed and large; it is generated, so do not edit it
     concurrently under `Promise.all` and each message acks or retries on its own; a non-2xx or
     a timeout throws, which retries and eventually dead-letters. Order does not matter because
     every event makes the Pi reconcile its whole population.
-- **`wrangler.jsonc`** — deploy config only: the `EVENTS` queue producer and the consumer
-  (`max_batch_size` 10, `max_retries` 5, `retry_delay` 30s, DLQ `door-webhook-dlq`).
-  `nodejs_compat` is on and `observability` is enabled. No `vars`, no `account_id`.
-- **Secrets** (`ORIGIN_URL`, `CIVICRM_WEBHOOK_SECRET`, `ORIGIN_HMAC_SECRET`,
-  `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`) are set with `wrangler secret put`, never
-  in `wrangler.jsonc`. Locally they live in `.dev.vars`, which is git-ignored, which the test
-  pool loads, and which `wrangler types` reads to generate their `Env` entries.
+- **`wrangler.jsonc`** — deploy config: the `EVENTS` queue producer, the consumer
+  (`max_batch_size` 10, `max_retries` 5, `retry_delay` 30s, DLQ `door-webhook-dlq`), and the
+  non-secret `ORIGIN_URL` var. `nodejs_compat` is on and `observability` is enabled. No
+  `account_id` — that comes from the environment.
+- **Secrets** (`CIVICRM_WEBHOOK_SECRET`, `ORIGIN_HMAC_SECRET`, `CF_ACCESS_CLIENT_ID`,
+  `CF_ACCESS_CLIENT_SECRET`) are set with `wrangler secret put`, never in `wrangler.jsonc`.
+  Locally they live in `.dev.vars`, which is git-ignored, which the test pool loads, and which
+  `wrangler types` reads to generate their `Env` entries.
 - **Tests** (`test/index.spec.ts`) use `@cloudflare/vitest-pool-workers`, which runs them inside
   the real `workerd` runtime; `vitest.config.mts` points the pool at `wrangler.jsonc`, so tests
   share the Worker's config. They import the `worker` default export and invoke handlers

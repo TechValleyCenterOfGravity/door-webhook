@@ -35,9 +35,9 @@ The verifier rejects a timestamp more than 300s from now (replay guard).
 
 ## Setup
 
-`wrangler.jsonc` holds no account id, hostname or secret, so it is safe to
-publish. Everything environment-specific comes from git-ignored files or from
-`wrangler secret put`.
+`wrangler.jsonc` holds no account id and no secrets, so it is safe to publish.
+The account comes from a git-ignored `.env`; secrets are set with
+`wrangler secret put`. `ORIGIN_URL` stays in the file as ordinary config.
 
 ```bash
 npm install
@@ -50,15 +50,17 @@ cp .env.example .env      # then set CLOUDFLARE_ACCOUNT_ID (npx wrangler whoami)
 npx wrangler queues create door-webhook-events
 npx wrangler queues create door-webhook-dlq
 
-# 3. Set the runtime config. ORIGIN_URL is the Pi's Cloudflare Tunnel hostname
-#    (scheme + host only — the Worker appends the path):
-npx wrangler secret put ORIGIN_URL                # e.g. https://door-sync.example.org
+# 3. Set vars.ORIGIN_URL in wrangler.jsonc to the Pi's Cloudflare Tunnel
+#    hostname — scheme + host only, the Worker appends the path. It is
+#    non-secret config, so it is reviewed and deployed with the code.
+
+# 4. Set the secrets:
 npx wrangler secret put CIVICRM_WEBHOOK_SECRET    # shared with the CiviRules action
 npx wrangler secret put ORIGIN_HMAC_SECRET        # shared with the Pi (WEBHOOK_HMAC_SECRET)
 npx wrangler secret put CF_ACCESS_CLIENT_ID       # Access service token for the tunnel
 npx wrangler secret put CF_ACCESS_CLIENT_SECRET
 
-# 4. Deploy:
+# 5. Deploy:
 npm run deploy
 ```
 
