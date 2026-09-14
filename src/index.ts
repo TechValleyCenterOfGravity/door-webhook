@@ -27,6 +27,7 @@ const enc = new TextEncoder();
 export interface WebhookEvent {
 	contactId: number | null;
 	deliveryId: string;
+	/** Unix seconds: the producer's `occurred_at`, else when this Worker received it. */
 	occurredAt: number;
 }
 
@@ -101,24 +102,30 @@ export async function signBody(secret: string, ts: number, body: string): Promis
 	return bytesToHex(new Uint8Array(sig));
 }
 
-/** Best-effort parse of contact_id (number or numeric string) for logging/routing. */
-function extractContactId(rawBody: Uint8Array): number | null {
+/** A JSON integer, or an all-digits string — CiviCRM sometimes sends ids as strings. */
+function asInteger(value: unknown): number | null {
+	if (typeof value === 'number' && Number.isInteger(value)) {
+		return value;
+	}
+	if (typeof value === 'string' && /^\d+$/.test(value)) {
+		return Number(value);
+	}
+	return null;
+}
+
+/** Best-effort parse of the producer's payload. One pass over the raw body. */
+function parsePayload(rawBody: Uint8Array): { contactId: number | null; occurredAt: number | null } {
 	try {
 		const payload: unknown = JSON.parse(new TextDecoder().decode(rawBody));
 		if (payload && typeof payload === 'object') {
-			const cid = (payload as Record<string, unknown>).contact_id;
-			if (typeof cid === 'number' && Number.isInteger(cid)) {
-				return cid;
-			}
-			if (typeof cid === 'string' && /^\d+$/.test(cid)) {
-				return Number(cid);
-			}
+			const record = payload as Record<string, unknown>;
+			return { contactId: asInteger(record.contact_id), occurredAt: asInteger(record.occurred_at) };
 		}
 	} catch {
 		// Non-JSON or malformed: fall through. A missing id never blocks the
 		// trigger — the Pi always runs a whole-population reconcile.
 	}
-	return null;
+	return { contactId: null, occurredAt: null };
 }
 
 async function deliverToPi(event: WebhookEvent, env: Env): Promise<void> {
@@ -166,10 +173,14 @@ export default {
 		if (!ok) {
 			return new Response('unauthorized', { status: 401 });
 		}
+		const payload = parsePayload(raw);
 		const event: WebhookEvent = {
-			contactId: extractContactId(raw),
+			contactId: payload.contactId,
 			deliveryId: crypto.randomUUID(),
-			occurredAt: Math.floor(Date.now() / 1000),
+			// When CiviCRM fired, not when we received it: a queue retry can delay
+			// delivery by minutes and the Pi should still see the original time.
+			// Falls back to receive time if the producer omitted occurred_at.
+			occurredAt: payload.occurredAt ?? Math.floor(Date.now() / 1000),
 		};
 		await env.EVENTS.send(event);
 		console.log(`membership webhook accepted; contact_id=${event.contactId}; queued ${event.deliveryId}`);

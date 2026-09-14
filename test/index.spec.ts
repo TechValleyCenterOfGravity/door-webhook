@@ -151,6 +151,31 @@ describe('fetch (receiver)', () => {
 		expect((sent[0] as { contactId: number | null }).contactId).toBeNull();
 	});
 
+	it('carries the producer occurred_at through to the queue', async () => {
+		const { env, sent } = fetchEnv();
+		const ctx = createExecutionContext();
+		const res = await worker.fetch(await signedRequest('{"contact_id":7,"occurred_at":1789000000}'), env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(res.status).toBe(202);
+		// The CiviCRM event time, not the receive time — a queue retry must not
+		// shift what the Pi sees.
+		expect((sent[0] as { occurredAt: number }).occurredAt).toBe(1789000000);
+	});
+
+	it('falls back to receive time when the producer omits occurred_at', async () => {
+		const { env, sent } = fetchEnv();
+		const before = Math.floor(Date.now() / 1000);
+		const ctx = createExecutionContext();
+		const res = await worker.fetch(await signedRequest('{"contact_id":7}'), env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(res.status).toBe(202);
+		const { occurredAt } = sent[0] as { occurredAt: number };
+		expect(occurredAt).toBeGreaterThanOrEqual(before);
+		expect(occurredAt).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
+	});
+
 	it('returns 404 for the wrong method or path', async () => {
 		const { env } = fetchEnv();
 		const ctx = createExecutionContext();
