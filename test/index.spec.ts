@@ -47,6 +47,7 @@ function fetchEnv(overrides: Record<string, unknown> = {}) {
 afterEach(() => {
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
+	vi.useRealTimers();
 });
 
 describe('verifySignature', () => {
@@ -163,6 +164,54 @@ describe('fetch (receiver)', () => {
 		});
 		const res = await worker.fetch(wrongPathReq, env, ctx);
 		expect(res.status).toBe(404);
+	});
+});
+
+describe('CiviCRM producer contract', () => {
+	// Golden vector produced by real PHP (8.5.8), using the exact logic of
+	// door-civirules' CRM_CivirulesActions_DoorSync_Base::processAction and
+	// MembershipWebhook::buildPayload:
+	//
+	//   $body = json_encode(['contact_id' => 42, 'occurred_at' => 1789000000], JSON_UNESCAPED_SLASHES);
+	//   $sig  = hash_hmac('sha256', $ts . '.' . $body, $secret);
+	//
+	// This is the cross-repo signing contract. If it breaks, CiviCRM's webhooks
+	// start 401ing in production — regenerate it from door-civirules rather than
+	// editing the expected values to match new Worker behaviour.
+	const PHP_BODY = '{"contact_id":42,"occurred_at":1789000000}';
+	const PHP_TIMESTAMP = '1789000000';
+	const PHP_SIGNATURE = 'sha256=9db87308e8a5697097b17d481bfad994acacc71be62710b522114c1e9f0e36f7';
+
+	it('accepts a signature produced by the PHP CiviRules action', async () => {
+		const ok = await verifySignature(SECRET, enc.encode(PHP_BODY), PHP_TIMESTAMP, PHP_SIGNATURE, 300, Number(PHP_TIMESTAMP));
+		expect(ok).toBe(true);
+	});
+
+	it('rejects the PHP vector under a different secret', async () => {
+		const ok = await verifySignature('other-secret', enc.encode(PHP_BODY), PHP_TIMESTAMP, PHP_SIGNATURE, 300, Number(PHP_TIMESTAMP));
+		expect(ok).toBe(false);
+	});
+
+	it('enqueues the contact_id from the PHP payload shape', async () => {
+		const { env, sent } = fetchEnv();
+		const hex = await hmacHex(SECRET, `${PHP_TIMESTAMP}.${PHP_BODY}`);
+		const req = new IncomingRequest('https://webhook.example.com' + PATH, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'X-Door-Sync-Timestamp': PHP_TIMESTAMP,
+				'X-Door-Sync-Signature': 'sha256=' + hex,
+			},
+			body: PHP_BODY,
+		});
+		// The vector's timestamp is fixed, so hold "now" there to clear the replay window.
+		vi.setSystemTime(Number(PHP_TIMESTAMP) * 1000);
+		const ctx = createExecutionContext();
+		const res = await worker.fetch(req, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(res.status).toBe(202);
+		expect((sent[0] as { contactId: number }).contactId).toBe(42);
 	});
 });
 
