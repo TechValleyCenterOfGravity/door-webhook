@@ -176,6 +176,35 @@ describe('fetch (receiver)', () => {
 		expect(occurredAt).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
 	});
 
+	it('falls back to receive time when occurred_at is not a safe integer', async () => {
+		// A digit-only string long enough that Number(...) is Infinity. The regex
+		// guard alone accepts it, and JSON.stringify would then hand the Pi
+		// {"occurred_at":null} inside deliverToPi.
+		const { env, sent } = fetchEnv();
+		const huge = '1'.repeat(400);
+		const before = Math.floor(Date.now() / 1000);
+		const ctx = createExecutionContext();
+		const res = await worker.fetch(await signedRequest(`{"contact_id":7,"occurred_at":"${huge}"}`), env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(res.status).toBe(202);
+		const { occurredAt } = sent[0] as { occurredAt: number };
+		expect(Number.isSafeInteger(occurredAt)).toBe(true);
+		expect(occurredAt).toBeGreaterThanOrEqual(before);
+	});
+
+	it('treats a contact_id beyond the safe integer range as unknown', async () => {
+		// Past 2^53 the value is silently rounded, so it would name a different
+		// contact than CiviCRM sent. Unknown is accurate; a wrong id is not.
+		const { env, sent } = fetchEnv();
+		const ctx = createExecutionContext();
+		const res = await worker.fetch(await signedRequest('{"contact_id":12345678901234567890,"occurred_at":1789000000}'), env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(res.status).toBe(202);
+		expect((sent[0] as { contactId: number | null }).contactId).toBeNull();
+	});
+
 	it('returns 404 for the wrong method or path', async () => {
 		const { env } = fetchEnv();
 		const ctx = createExecutionContext();

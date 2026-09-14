@@ -102,13 +102,20 @@ export async function signBody(secret: string, ts: number, body: string): Promis
 	return bytesToHex(new Uint8Array(sig));
 }
 
-/** A JSON integer, or an all-digits string — CiviCRM sometimes sends ids as strings. */
+/**
+ * A JSON integer, or an all-digits string — CiviCRM sometimes sends ids as
+ * strings. Anything outside the safe-integer range is rejected rather than
+ * coerced: the digit regex alone admits strings long enough that Number() is
+ * Infinity (which JSON.stringify would forward to the Pi as null), and past
+ * 2^53 a value is silently rounded to a different number than was sent.
+ */
 function asInteger(value: unknown): number | null {
-	if (typeof value === 'number' && Number.isInteger(value)) {
+	if (typeof value === 'number' && Number.isSafeInteger(value)) {
 		return value;
 	}
 	if (typeof value === 'string' && /^\d+$/.test(value)) {
-		return Number(value);
+		const parsed = Number(value);
+		return Number.isSafeInteger(parsed) ? parsed : null;
 	}
 	return null;
 }
