@@ -334,6 +334,32 @@ describe('queue (consumer)', () => {
 		expect(msg.ack).not.toHaveBeenCalled();
 	});
 
+	it('names the missing config instead of failing inside crypto', async () => {
+		// Reproduces the production failure: with ORIGIN_HMAC_SECRET unset,
+		// TextEncoder.encode(undefined) is empty (the WebIDL default is ''), so
+		// importKey got a zero-length key and threw a DataError naming neither the
+		// Worker nor the variable.
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		const logs: string[] = [];
+		vi.spyOn(console, 'log').mockImplementation((m: unknown) => void logs.push(String(m)));
+		const env = { ORIGIN_URL: 'https://pi.example.org' } as unknown as Env;
+		const msg = fakeMessage({ contactId: 7, deliveryId: 'd-1', occurredAt: 1 });
+		const batch = { queue: 'door-webhook-events', messages: [msg], ackAll: vi.fn(), retryAll: vi.fn() };
+		const ctx = createExecutionContext();
+		await worker.queue(batch as never, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(msg.retry).toHaveBeenCalledTimes(1);
+		const logged = logs.join('\n');
+		expect(logged).toContain('missing Worker config');
+		expect(logged).toContain('ORIGIN_HMAC_SECRET');
+		expect(logged).toContain('CF_ACCESS_CLIENT_ID');
+		expect(logged).toContain('CF_ACCESS_CLIENT_SECRET');
+		expect(logged).not.toContain('ORIGIN_URL,');
+	});
+
 	it('caps each delivery with an abort signal, and retries when one aborts', async () => {
 		let seenSignal: AbortSignal | null | undefined;
 		vi.stubGlobal(

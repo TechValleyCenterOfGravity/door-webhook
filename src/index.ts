@@ -20,6 +20,11 @@ const PI_PATH = '/civicrm/membership-changed';
 // Cap one delivery attempt: a stalled tunnel must not hold the invocation open
 // until the runtime kills it. A timeout throws, so the message just retries.
 const DELIVERY_TIMEOUT_MS = 10_000;
+// Config the consumer needs before it can sign or authenticate a delivery.
+// Without this check a missing secret reaches crypto.subtle.importKey as a
+// zero-length key (TextEncoder.encode(undefined) is empty, not "undefined"),
+// which fails with a DataError that names neither the Worker nor the variable.
+const REQUIRED_DELIVERY_CONFIG = ['ORIGIN_URL', 'ORIGIN_HMAC_SECRET', 'CF_ACCESS_CLIENT_ID', 'CF_ACCESS_CLIENT_SECRET'] as const;
 
 const enc = new TextEncoder();
 
@@ -136,6 +141,12 @@ function parsePayload(rawBody: Uint8Array): { contactId: number | null; occurred
 }
 
 async function deliverToPi(event: WebhookEvent, env: Env): Promise<void> {
+	const missing = REQUIRED_DELIVERY_CONFIG.filter((key) => !env[key]);
+	if (missing.length > 0) {
+		// Retried like any other failure: once the config is set a redelivery
+		// succeeds, and the DLQ holds the event if it is not set in time.
+		throw new Error(`missing Worker config: ${missing.join(', ')}`);
+	}
 	const ts = Math.floor(Date.now() / 1000);
 	const body = JSON.stringify({
 		contact_id: event.contactId,
