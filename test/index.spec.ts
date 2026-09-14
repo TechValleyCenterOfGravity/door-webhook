@@ -217,4 +217,79 @@ describe('queue (consumer)', () => {
 		expect(msg.retry).toHaveBeenCalledTimes(1);
 		expect(msg.ack).not.toHaveBeenCalled();
 	});
+
+	it('caps each delivery with an abort signal, and retries when one aborts', async () => {
+		let seenSignal: AbortSignal | null | undefined;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((_url: string, init: RequestInit) => {
+				seenSignal = init.signal;
+				// What a stalled origin produces once AbortSignal.timeout() fires.
+				return Promise.reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+			}),
+		);
+		const msg = fakeMessage({ contactId: 7, deliveryId: 'd-1', occurredAt: 1 });
+		const batch = { queue: 'door-webhook-events', messages: [msg], ackAll: vi.fn(), retryAll: vi.fn() };
+		const ctx = createExecutionContext();
+		await worker.queue(batch as never, queueEnv(), ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(seenSignal).toBeInstanceOf(AbortSignal);
+		expect(seenSignal?.aborted).toBe(false);
+		expect(msg.retry).toHaveBeenCalledTimes(1);
+		expect(msg.ack).not.toHaveBeenCalled();
+	});
+
+	it('delivers a batch concurrently, so one slow origin request does not block the rest', async () => {
+		const started: string[] = [];
+		let releaseSlow!: (resp: Response) => void;
+		const slow = new Promise<Response>((resolve) => {
+			releaseSlow = resolve;
+		});
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((_url: string, init: RequestInit) => {
+				const id = JSON.parse(init.body as string).delivery_id as string;
+				started.push(id);
+				// 'd-slow' only settles once the *next* delivery has started, which can
+				// happen only if the batch is not delivered one message at a time.
+				if (id === 'd-slow') {
+					return slow;
+				}
+				releaseSlow(new Response(null, { status: 202 }));
+				return Promise.resolve(new Response(null, { status: 202 }));
+			}),
+		);
+		const slowMsg = fakeMessage({ contactId: 1, deliveryId: 'd-slow', occurredAt: 1 });
+		const fastMsg = fakeMessage({ contactId: 2, deliveryId: 'd-fast', occurredAt: 1 });
+		const batch = { queue: 'door-webhook-events', messages: [slowMsg, fastMsg], ackAll: vi.fn(), retryAll: vi.fn() };
+		const ctx = createExecutionContext();
+		await worker.queue(batch as never, queueEnv(), ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(started).toEqual(['d-slow', 'd-fast']);
+		expect(slowMsg.ack).toHaveBeenCalledTimes(1);
+		expect(fastMsg.ack).toHaveBeenCalledTimes(1);
+	});
+
+	it('acks and retries messages in the same batch independently', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_url: string, init: RequestInit) => {
+				const id = JSON.parse(init.body as string).delivery_id as string;
+				return new Response(null, { status: id === 'd-bad' ? 500 : 202 });
+			}),
+		);
+		const goodMsg = fakeMessage({ contactId: 1, deliveryId: 'd-good', occurredAt: 1 });
+		const badMsg = fakeMessage({ contactId: 2, deliveryId: 'd-bad', occurredAt: 1 });
+		const batch = { queue: 'door-webhook-events', messages: [goodMsg, badMsg], ackAll: vi.fn(), retryAll: vi.fn() };
+		const ctx = createExecutionContext();
+		await worker.queue(batch as never, queueEnv(), ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(goodMsg.ack).toHaveBeenCalledTimes(1);
+		expect(goodMsg.retry).not.toHaveBeenCalled();
+		expect(badMsg.retry).toHaveBeenCalledTimes(1);
+		expect(badMsg.ack).not.toHaveBeenCalled();
+	});
 });

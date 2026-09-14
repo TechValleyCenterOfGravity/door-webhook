@@ -17,6 +17,9 @@ const SIG_HEADER = 'X-Door-Sync-Signature';
 const SIG_PREFIX = 'sha256=';
 const MAX_SKEW_SECONDS = 300;
 const PI_PATH = '/civicrm/membership-changed';
+// Cap one delivery attempt: a stalled tunnel must not hold the invocation open
+// until the runtime kills it. A timeout throws, so the message just retries.
+const DELIVERY_TIMEOUT_MS = 10_000;
 
 const enc = new TextEncoder();
 
@@ -137,6 +140,7 @@ async function deliverToPi(event: WebhookEvent, env: Env): Promise<void> {
 			'CF-Access-Client-Secret': env.CF_ACCESS_CLIENT_SECRET,
 		},
 		body,
+		signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
 	});
 	if (!resp.ok) {
 		// Thrown -> the message is retried, then dead-lettered after max_retries.
@@ -173,14 +177,19 @@ export default {
 	},
 
 	async queue(batch, env, _ctx): Promise<void> {
-		for (const message of batch.messages) {
-			try {
-				await deliverToPi(message.body as WebhookEvent, env);
-				message.ack();
-			} catch (err) {
-				console.log(`delivery failed (attempt ${message.attempts}); will retry: ${String(err)}`);
-				message.retry();
-			}
-		}
+		// Deliveries run concurrently: every event makes the Pi reconcile the whole
+		// population, so order does not matter, and one slow origin request must not
+		// delay the other messages in the batch. Each message acks or retries alone.
+		await Promise.all(
+			batch.messages.map(async (message) => {
+				try {
+					await deliverToPi(message.body as WebhookEvent, env);
+					message.ack();
+				} catch (err) {
+					console.log(`delivery failed (attempt ${message.attempts}); will retry: ${String(err)}`);
+					message.retry();
+				}
+			}),
+		);
 	},
 } satisfies ExportedHandler<Env, WebhookEvent>;
