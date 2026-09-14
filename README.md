@@ -35,28 +35,40 @@ The verifier rejects a timestamp more than 300s from now (replay guard).
 
 ## Setup
 
+`wrangler.jsonc` holds no account id, hostname or secret, so it is safe to
+publish. Everything environment-specific comes from git-ignored files or from
+`wrangler secret put`.
+
 ```bash
 npm install
 
-# 1. Create the queues (once, in the Tech Valley Center of Gravity account):
+# 1. Point the CLI at the right Cloudflare account. Without this wrangler
+#    refuses to guess when your login can reach more than one account.
+cp .env.example .env      # then set CLOUDFLARE_ACCOUNT_ID (npx wrangler whoami)
+
+# 2. Create the queues (once per account):
 npx wrangler queues create door-webhook-events
 npx wrangler queues create door-webhook-dlq
 
-# 2. Set the origin URL in wrangler.jsonc (vars.ORIGIN_URL) to the Pi's
-#    Cloudflare Tunnel hostname, e.g. https://door-sync.example.org
-
-# 3. Set secrets:
-npx wrangler secret put CIVICRM_WEBHOOK_SECRET   # shared with the CiviRules action
-npx wrangler secret put ORIGIN_HMAC_SECRET       # shared with the Pi (WEBHOOK_HMAC_SECRET)
-npx wrangler secret put CF_ACCESS_CLIENT_ID      # Access service token for the tunnel
+# 3. Set the runtime config. ORIGIN_URL is the Pi's Cloudflare Tunnel hostname
+#    (scheme + host only — the Worker appends the path):
+npx wrangler secret put ORIGIN_URL                # e.g. https://door-sync.example.org
+npx wrangler secret put CIVICRM_WEBHOOK_SECRET    # shared with the CiviRules action
+npx wrangler secret put ORIGIN_HMAC_SECRET        # shared with the Pi (WEBHOOK_HMAC_SECRET)
+npx wrangler secret put CF_ACCESS_CLIENT_ID       # Access service token for the tunnel
 npx wrangler secret put CF_ACCESS_CLIENT_SECRET
 
 # 4. Deploy:
 npm run deploy
 ```
 
-For local development, put the same keys in `.dev.vars` (git-ignored). Re-run
-`npm run cf-typegen` after any change to `wrangler.jsonc`.
+The queue consumer checks all of these before it signs a delivery, so a missing
+one is logged by name (`missing Worker config: ORIGIN_URL, ...`) rather than
+surfacing as a crypto error.
+
+For local development, copy `.dev.vars.example` to `.dev.vars` (git-ignored) and
+fill it in — `wrangler types` reads that file to type the bindings, so re-run
+`npm run cf-typegen` after adding a key there or changing `wrangler.jsonc`.
 
 ## Commands
 

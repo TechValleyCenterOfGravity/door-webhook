@@ -7,7 +7,6 @@
 	"name": "door-webhook",
 	"main": "src/index.ts",
 	"compatibility_date": "2026-07-09",
-	"account_id": "c1ef96411426c5bc8ef8d6a8bd8d23ea",
 	"observability": {
 		"enabled": true,
 	},
@@ -35,10 +34,10 @@
 			},
 		],
 	},
-	// Non-secret. The Pi's tunnel origin, e.g. https://door-sync.example.org.
-	// Secrets are set with `wrangler secret put` (see README): CIVICRM_WEBHOOK_SECRET,
-	// ORIGIN_HMAC_SECRET, CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET.
-	"vars": {
-		"ORIGIN_URL": "https://door-sync.example.org",
-	},
+	// Nothing environment-specific lives in this file, so it is safe to publish.
+	// The account is supplied by CLOUDFLARE_ACCOUNT_ID (.env, git-ignored), and
+	// every runtime value is a secret set with `wrangler secret put`:
+	// ORIGIN_URL, CIVICRM_WEBHOOK_SECRET, ORIGIN_HMAC_SECRET,
+	// CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET. See README.md.
+	// Locally those come from .dev.vars, which also types them for `wrangler types`.
 }
